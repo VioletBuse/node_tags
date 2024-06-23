@@ -64,6 +64,7 @@ type State {
 }
 
 pub opaque type Message {
+  Shutdown
   Initialize(self: Subject(Message))
   Tick(self: Subject(Message))
   SetTag(key: String, value: Value)
@@ -74,17 +75,46 @@ pub opaque type Message {
     client: Subject(List(#(Node, Dict(String, Value)))),
     tag: #(String, Value),
   )
-  MultipleUpdates(List(Message))
+  MultipleUpdates(self: Subject(Message), List(Message))
   InternalUpdateTag(node: Node, tag: #(String, Option(Value)))
+}
+
+pub fn set(manager: TagManager, key: String, value: Value) {
+  process.send(manager.actor, SetTag(key, value))
+}
+
+pub fn delete(manager: TagManager, key: String) {
+  process.send(manager.actor, DeleteTag(key))
+}
+
+pub fn get_own_tags(manager: TagManager, until timeout: Int) {
+  process.call(manager.actor, GetTags, timeout)
+}
+
+pub fn get_nodes(manager: TagManager, until timeout: Int) {
+  process.call(manager.actor, Nodes, timeout)
+}
+
+pub fn get_nodes_tagged(
+  manager: TagManager,
+  where tag: #(String, Value),
+  until timeout: Int,
+) {
+  process.call(manager.actor, TaggedNodes(_, tag), timeout)
+}
+
+pub fn shutdown(manager: TagManager) {
+  process.send(manager.actor, Shutdown)
 }
 
 fn handle_message(message: Message, state: State) -> actor.Next(Message, State) {
   case message {
+    Shutdown -> actor.Stop(process.Normal)
     Initialize(..) -> handle_init(message, state)
     Tick(..) -> handle_tick(message, state)
     SetTag(..) -> handle_set_tag(message, state)
     DeleteTag(..) -> handle_delete_tag(message, state)
-    GetTags(..) -> handle_get_tag(message, state)
+    GetTags(..) -> handle_get_tags(message, state)
     Nodes(..) -> handle_get_nodes_data(message, state)
     TaggedNodes(..) -> handle_get_nodes_filtered(message, state)
     MultipleUpdates(..) -> handle_internal_multiple_updates(message, state)
@@ -140,7 +170,7 @@ fn handle_init(message: Message, state: State) -> actor.Next(Message, State) {
             InternalUpdateTag(node, #(key, Some(value)))
           })
 
-        MultipleUpdates(messages)
+        MultipleUpdates(self, messages)
       },
     )
 
@@ -209,34 +239,69 @@ fn handle_delete_tag(
   actor.continue(State(..state, tags: tags))
 }
 
-fn handle_get_tag(message: Message, state: State) -> actor.Next(Message, State) {
-  todo
+fn handle_get_tags(message: Message, state: State) -> actor.Next(Message, State) {
+  let assert GetTags(client) = message
+
+  dict.to_list(state.tags)
+  |> process.send(client, _)
+
+  actor.continue(state)
 }
 
 fn handle_get_nodes_data(
   message: Message,
   state: State,
 ) -> actor.Next(Message, State) {
-  todo
+  let assert Nodes(client) = message
+
+  dict.to_list(state.nodes)
+  |> process.send(client, _)
+
+  actor.continue(state)
 }
 
 fn handle_get_nodes_filtered(
   message: Message,
   state: State,
 ) -> actor.Next(Message, State) {
-  todo
+  let assert TaggedNodes(client, #(key, value)) = message
+
+  dict.to_list(state.nodes)
+  |> list.filter(fn(node) {
+    case dict.get(node.1, key) {
+      Ok(val) if value == val -> True
+      _ -> False
+    }
+  })
+  |> process.send(client, _)
+
+  actor.continue(state)
 }
 
 fn handle_internal_update_tag(
   message: Message,
   state: State,
 ) -> actor.Next(Message, State) {
-  todo
+  let assert InternalUpdateTag(node, #(key, value)) = message
+
+  let node_dict = dict.get(state.nodes, node) |> result.unwrap(dict.new())
+  let node_dict = case value {
+    Some(value) -> dict.insert(node_dict, key, value)
+    None -> dict.delete(node_dict, key)
+  }
+
+  let nodes = dict.insert(state.nodes, node, node_dict)
+
+  actor.continue(State(..state, nodes: nodes))
 }
 
 fn handle_internal_multiple_updates(
   message: Message,
   state: State,
 ) -> actor.Next(Message, State) {
-  todo
+  let assert MultipleUpdates(self, messages) = message
+
+  list.each(messages, process.send(self, _))
+
+  actor.continue(state)
 }
