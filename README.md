@@ -8,9 +8,21 @@ gleam add node_tags
 ```
 ```gleam
 import node_tags
+import gleam/erlang/atom
+import gleam/io
 
 pub fn main() {
-  // TODO: An example of the project in use
+  let manager = atom.create_from_string("tags")
+  |> node_tags.start
+
+  node_tags.set(manager, "id", node_tags.String("main_node"))
+  io.debug(
+    node_tags.get_nodes_tagged(
+      manager,
+      where: #("id", node_tags.String("worker_node")),
+      until: 1000
+    )
+  )
 }
 ```
 
